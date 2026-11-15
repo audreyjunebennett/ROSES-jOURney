@@ -4,7 +4,9 @@ Source for the ROSES Minecraft Java 26.3 Fabric Creative bridge and disposable m
 
 ## Creative bridge
 
-The bridge uses Worlds to switch the player profile, inventory and game mode. It gates Axiom by Creative dimension and stores a per-player Survival return point. Version 0.3.0 is the source for the build deployed with Axiom 6.1.5, Worlds 2.0.0+26.3, LuckPerms 5.5.85 and Fabric API 0.165.2+26.3. The bridge is server-side.
+The bridge uses Worlds to switch the player profile, inventory and game mode. It gates Axiom by Creative dimension and stores a per-player Survival return point. It runs on the server with Axiom 6.1.5, Worlds 2.0.0+26.3, LuckPerms 5.5.85 and Fabric API 0.165.2+26.3.
+
+Version 0.3.2 targets Expansive Fantasy Survival at `roses:expansive_fantasy`. It keeps the original `roses:creative` dimension eligible for Axiom and return travel. An entry command waits for the destination's Worlds readiness signal, so Distant Horizons receives the level load event before the player arrives. The scenic round trip and restart were verified on disposable ROSES copies.
 
 With a Java 25 JDK on PATH, point the build at an initialized, disposable ROSES 26.3 server copy.
 

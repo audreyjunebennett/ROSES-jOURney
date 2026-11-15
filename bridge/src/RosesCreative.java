@@ -14,8 +14,10 @@ import net.luckperms.api.model.user.User;
 import net.luckperms.api.query.QueryOptions;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.portal.TeleportTransition;
 import net.minecraft.world.phys.Vec2;
@@ -26,7 +28,8 @@ import java.util.Optional;
 import static net.minecraft.commands.Commands.literal;
 
 public final class RosesCreative implements DedicatedServerModInitializer {
-    static final Identifier CREATIVE = Identifier.fromNamespaceAndPath("roses", "creative");
+    private static final Identifier CREATIVE = Identifier.fromNamespaceAndPath("roses", "expansive_fantasy");
+    private static final Identifier ORIGINAL_CREATIVE = Identifier.fromNamespaceAndPath("roses", "creative");
     private static final Identifier SURVIVAL = Identifier.withDefaultNamespace("overworld");
     private static final String ACCESS = "roses.creative.access";
     private static final AttachmentType<ServerPlayer.SavedPosition> SURVIVAL_RETURN =
@@ -34,7 +37,8 @@ public final class RosesCreative implements DedicatedServerModInitializer {
             builder.persistent(ServerPlayer.SavedPosition.MAP_CODEC.codec()).copyOnDeath());
 
     public static boolean inCreative(ServerPlayer player) {
-        return player.level().dimension().identifier().equals(CREATIVE);
+        var dimension = player.level().dimension().identifier();
+        return dimension.equals(CREATIVE) || dimension.equals(ORIGINAL_CREATIVE);
     }
 
     public static boolean canEnter(ServerPlayer player) {
@@ -59,7 +63,8 @@ public final class RosesCreative implements DedicatedServerModInitializer {
 
     private static int enterCreative(CommandSourceStack source) throws CommandSyntaxException {
         var player = source.getPlayerOrException();
-        var level = source.getServer().getLevel(ResourceKey.create(Registries.DIMENSION, CREATIVE));
+        var server = source.getServer();
+        var level = server.getLevel(ResourceKey.create(Registries.DIMENSION, CREATIVE));
         if (level == null) {
             return travel(source, CREATIVE);
         }
@@ -67,11 +72,38 @@ public final class RosesCreative implements DedicatedServerModInitializer {
             return 0;
         }
 
+        // Lazy worlds publish Fabric's level-load event before becoming ready.
+        // Distant Horizons needs that event before receiving a player-level change.
+        var ready = McWorld.whenReady(level);
+        if (ready.isCompletedExceptionally()) {
+            source.sendFailure(Component.literal("The Creative world could not load."));
+            return 0;
+        }
+        if (!ready.isDone()) {
+            var previousLevel = player.level();
+            source.sendSuccess(() -> Component.literal("Loading the Creative world…"), false);
+            ready.whenCompleteAsync((loaded, failure) -> {
+                if (server.getPlayerList().getPlayer(player.getUUID()) != player || player.isDeadOrDying()
+                        || player.level() != previousLevel || !canEnter(player)) {
+                    return;
+                }
+                if (failure != null) {
+                    source.sendFailure(Component.literal("The Creative world could not load."));
+                    return;
+                }
+                teleportToCreative(player, loaded);
+            }, server);
+            return 1;
+        }
+        return teleportToCreative(player, level);
+    }
+
+    private static int teleportToCreative(ServerPlayer player, ServerLevel level) {
         // Worlds can move the original player object before handing off the connection.
         var returnPoint = WorldGroups.isDefault(McWorld.groupOf(player))
             ? new ServerPlayer.SavedPosition(Optional.of(player.level().dimension()), Optional.of(player.position()),
                 Optional.of(new Vec2(player.getYRot(), player.getXRot())))
-            : null;
+            : ((AttachmentTarget) player).getAttached(SURVIVAL_RETURN);
         var spawn = McWorld.spawnTransition(level, player);
         var onArrival = spawn.postTeleportTransition().then(entity ->
             ((AttachmentTarget) entity).setAttached(SURVIVAL_RETURN, returnPoint));
