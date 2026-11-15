@@ -1,0 +1,1 @@
+{"required":true,"package":"roses.axiomgate.mixin","compatibilityLevel":"JAVA_25","mixins":["AxiomServerMixin"],"injectors":{"defaultRequire":1}}
