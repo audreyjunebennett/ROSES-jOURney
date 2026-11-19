@@ -17,7 +17,7 @@ abstract class AxiomServerMixin {
     @Inject(method = "hasPermission", at = @At("HEAD"), cancellable = true)
     private static void roses$gateActions(ServerPlayer player, AxiomPermission permission,
                                         CallbackInfoReturnable<Boolean> result) {
-        if (!RosesCreative.inCreative(player)) {
+        if (!RosesCreative.inCreative(player) && !RosesCreative.survivalAxiomEnabled(player)) {
             result.setReturnValue(false);
         }
     }
@@ -25,17 +25,18 @@ abstract class AxiomServerMixin {
     @Inject(method = "getPermissions", at = @At("HEAD"), cancellable = true)
     private static void roses$gatePermissionSet(ServerPlayer player,
                                                CallbackInfoReturnable<AxiomPermissionSet> result) {
-        if (!RosesCreative.inCreative(player)) {
-            result.setReturnValue(AxiomPermissionSet.NONE);
-        } else if (RosesCreative.canEnter(player)) {
+        if (RosesCreative.survivalAxiomEnabled(player)
+                || (RosesCreative.inCreative(player) && RosesCreative.canEnter(player))) {
             result.setReturnValue(AxiomPermissionSet.ALL);
+        } else if (!RosesCreative.inCreative(player)) {
+            result.setReturnValue(AxiomPermissionSet.NONE);
         }
     }
 
     @Inject(method = "calculateRestrictions", at = @At("HEAD"), cancellable = true)
     private static void roses$sendDisabledRestrictions(ServerPlayer player,
                                                        CallbackInfoReturnable<Restrictions> result) {
-        if (!RosesCreative.inCreative(player)) {
+        if (!RosesCreative.inCreative(player) && !RosesCreative.survivalAxiomEnabled(player)) {
             Restrictions disabled = new Restrictions();
             disabled.allowedPermissions.clear();
             disabled.deniedPermissions.addAll(java.util.EnumSet.allOf(AxiomPermission.class));

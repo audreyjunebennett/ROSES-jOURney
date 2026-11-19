@@ -9,6 +9,7 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentTarget;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.luckperms.api.LuckPermsProvider;
 import net.luckperms.api.model.user.User;
 import net.luckperms.api.query.QueryOptions;
@@ -19,54 +20,107 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.portal.TeleportTransition;
 import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import static net.minecraft.commands.Commands.literal;
 
 public final class RosesCreative implements DedicatedServerModInitializer {
-    private static final Identifier CREATIVE = Identifier.fromNamespaceAndPath("roses", "expansive_fantasy");
+    private static final Identifier CREATIVE = Identifier.fromNamespaceAndPath("roses", "coastal_mountains");
+    private static final Identifier CREATIVE_TWO = Identifier.fromNamespaceAndPath("roses", "mountain_lakes");
+    private static final Identifier FANTASY = Identifier.fromNamespaceAndPath("roses", "expansive_fantasy");
     private static final Identifier ORIGINAL_CREATIVE = Identifier.fromNamespaceAndPath("roses", "creative");
     private static final Identifier SURVIVAL = Identifier.withDefaultNamespace("overworld");
     private static final String ACCESS = "roses.creative.access";
+    private static final String SURVIVAL_AXIOM_ACCESS = "roses.axiom.survival";
+    private static final Map<UUID, GameType> SURVIVAL_AXIOM_SESSIONS = new HashMap<>();
     private static final AttachmentType<ServerPlayer.SavedPosition> SURVIVAL_RETURN =
         AttachmentRegistry.create(Identifier.fromNamespaceAndPath("roses", "survival_return"), builder ->
             builder.persistent(ServerPlayer.SavedPosition.MAP_CODEC.codec()).copyOnDeath());
 
     public static boolean inCreative(ServerPlayer player) {
         var dimension = player.level().dimension().identifier();
-        return dimension.equals(CREATIVE) || dimension.equals(ORIGINAL_CREATIVE);
+        return dimension.equals(CREATIVE) || dimension.equals(CREATIVE_TWO) || dimension.equals(FANTASY) || dimension.equals(ORIGINAL_CREATIVE);
     }
 
     public static boolean canEnter(ServerPlayer player) {
+        return hasPermission(player, ACCESS);
+    }
+
+    private static boolean hasPermission(ServerPlayer player, String permission) {
         // Worlds replaces the ServerPlayer on a group switch. Look up the account
         // directly so access does not depend on data attached to the old entity.
         User user = LuckPermsProvider.get().getUserManager().getUser(player.getUUID());
         return user != null && user.getCachedData().getPermissionData(QueryOptions.nonContextual())
-            .checkPermission(ACCESS).asBoolean();
+            .checkPermission(permission).asBoolean();
+    }
+
+    private static boolean inSurvivalGroup(ServerPlayer player) {
+        return WorldGroups.isDefault(McWorld.groupOf(player));
+    }
+
+    public static boolean survivalAxiomEnabled(ServerPlayer player) {
+        return SURVIVAL_AXIOM_SESSIONS.containsKey(player.getUUID()) && inSurvivalGroup(player)
+            && hasPermission(player, SURVIVAL_AXIOM_ACCESS);
     }
 
     @Override
     public void onInitializeServer() {
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
+            disableSurvivalAxiom(handler.player));
         CommandRegistrationCallback.EVENT.register((dispatcher, context, environment) ->
             dispatcher.register(literal("roses")
-                .then(literal("creative")
+                .then(literal("creative1")
                     .requires(source -> source.getEntity() instanceof ServerPlayer player && canEnter(player))
-                    .executes(contextNode -> enterCreative(contextNode.getSource())))
+                    .executes(node -> enterCreative(node.getSource(), CREATIVE)))
+                .then(literal("creative2")
+                    .requires(source -> source.getEntity() instanceof ServerPlayer player && canEnter(player))
+                    .executes(node -> enterCreative(node.getSource(), CREATIVE_TWO)))
                 .then(literal("survival")
                     .requires(source -> source.getEntity() instanceof ServerPlayer player && inCreative(player))
-                    .executes(contextNode -> returnToSurvival(contextNode.getSource())))));
+                    .executes(contextNode -> returnToSurvival(contextNode.getSource())))
+                .then(literal("axiom")
+                    .requires(source -> source.getEntity() instanceof ServerPlayer player
+                        && hasPermission(player, SURVIVAL_AXIOM_ACCESS))
+                    .then(literal("on").executes(node -> setSurvivalAxiom(node.getSource(), true)))
+                    .then(literal("off").executes(node -> setSurvivalAxiom(node.getSource(), false))))));
     }
 
-    private static int enterCreative(CommandSourceStack source) throws CommandSyntaxException {
+    private static int setSurvivalAxiom(CommandSourceStack source, boolean enabled) throws CommandSyntaxException {
+        var player = source.getPlayerOrException();
+        if (!inSurvivalGroup(player)) {
+            source.sendFailure(Component.literal("Run this command in the Survival world."));
+            return 0;
+        }
+        if (enabled) {
+            SURVIVAL_AXIOM_SESSIONS.putIfAbsent(player.getUUID(), player.gameMode.getGameModeForPlayer());
+        } else {
+            disableSurvivalAxiom(player);
+        }
+        source.sendSuccess(() -> Component.literal("Survival Axiom is " + (enabled ? "on." : "off.")), false);
+        return 1;
+    }
+
+    private static void disableSurvivalAxiom(ServerPlayer player) {
+        var originalMode = SURVIVAL_AXIOM_SESSIONS.remove(player.getUUID());
+        if (originalMode != null && inSurvivalGroup(player)) {
+            player.setGameMode(originalMode);
+        }
+    }
+
+    private static int enterCreative(CommandSourceStack source, Identifier destination) throws CommandSyntaxException {
         var player = source.getPlayerOrException();
         var server = source.getServer();
-        var level = server.getLevel(ResourceKey.create(Registries.DIMENSION, CREATIVE));
+        var level = server.getLevel(ResourceKey.create(Registries.DIMENSION, destination));
         if (level == null) {
-            return travel(source, CREATIVE);
+            return travel(source, destination);
         }
         if (player.level() == level || player.isDeadOrDying()) {
             return 0;
